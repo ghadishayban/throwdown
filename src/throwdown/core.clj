@@ -5,7 +5,7 @@
    [org.httpkit.client :as httpkit]
 
    ;; a few core.async primitives
-   [clojure.core.async :refer (<!! <! >! put! go chan)]
+   [clojure.core.async :refer (<!! <! >! put! go chan thread)]
 
    ;; IO manip
    [clojure.java.io :as io]
@@ -41,10 +41,10 @@
       (go (>! freq-maps (frequency-of-words (<! http-bodies)))))
 
     ;; collect each map of frequency and merge together
-    (<!! (go
+    (<!! (thread
           (loop [result {} i n]
             (if (pos? i)
-              (recur (transient-merge-with + result (<! freq-maps))
+              (recur (transient-merge-with + result (<!! freq-maps))
                      (dec i))
               result))))))
 
