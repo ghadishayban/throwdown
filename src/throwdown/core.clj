@@ -1,10 +1,57 @@
 (ns throwdown.core
-  (:require [org.httpkit.client :as httpkit]
-            [clojure.core.async :refer (<!! <! >! put! go chan)]
-            [throwdown.count-words :as count-words])
-  (:import [java.util.concurrent CountDownLatch]))
+  (:require
 
-(def urls
+   ;; your fav http library here
+   [org.httpkit.client :as httpkit]
+
+   ;; a few core.async primitives
+   [clojure.core.async :refer (<!! <! >! put! go chan)]
+
+   ;; IO manip
+   [clojure.java.io :as io]
+
+   [clojure.core.reducers :as r]
+   [clojure.string :as str]
+
+   ;; misc helpers
+   [throwdown.util :refer (split-string transient-merge-with)]))
+
+(set! *warn-on-reflection* true)
+
+(defn GET
+  "Hit a server and put the result body in a channel"
+  [uri channel]
+  (httpkit/get uri
+               {:keepalive 50000}
+               #(put! channel (get % :body))))  ;; NB node.js: the only callback
+
+(defn frequency-of-words
+  [body]
+  (frequencies (split-string body #"\s+")))
+
+(defn beat-node [urls]
+  (let [n (count urls)
+        http-bodies (chan n)
+        freq-maps (chan n)]
+
+    ;; grab http bodies, stick in a chan
+    ;; for each payload, compute the frequency of the words
+    (doseq [url urls]
+      (GET url http-bodies)
+      (go (>! freq-maps (frequency-of-words (<! http-bodies)))))
+
+    ;; collect each map of frequency and merge together
+    (<!! (go
+          (loop [result {} i n]
+            (if (pos? i)
+              (recur (transient-merge-with + result (<! freq-maps))
+                     (dec i))
+              result))))))
+
+(def beat-erlang beat-node)
+(def beat-golang beat-node)
+
+(def sample-urls
   (mapv (partial str "http://en.wikipedia.org/wiki/")
         ["ISO_8601"
          "Bonobos"
@@ -16,44 +63,19 @@
          "De_minimis_fringe_benefit"
          "Apple_Remote_Desktop"]))
 
-
-(defn http-kit [uri channel]
-  (httpkit/get uri
-            {:keepalive 50000}
-            #(put! channel (get % :body))))
-
-(defn watch-req [request-fn uri]
-  (let [bt (System/currentTimeMillis)
-        rc (chan 1)]
-    (request-fn uri rc)
-    (println "time in ms: " (- (System/currentTimeMillis) bt))
-    (println "Size body" (count (<!! rc)))))
-
-(defn freqall [urls]
-  (let [n (count urls)
-        return-ch (chan n)
-        result (atom {})
-        latch (CountDownLatch. n)]
-
-    ;; fire off async requests
-    (doseq [url urls]
-      (http-kit url return-ch))
-
-    ;; collect results
-    (dotimes [_ n]
-      (let [body (<!! return-ch)]
-        (future
-          (let [freqs (count-words/impl4 body)]
-            (swap! result #(count-words/transient-merge-with + % freqs))
-            (.countDown latch)))))
-    (.await latch)
-    @result))
-
-(let [chunk (<!! rc)]
-  (future (let [c (compute)
-                #(swap! res  merge-with + c)])))
-
+(defn write-output
+  [freq-map]
+  (reduce-kv (fn [_ word freq]
+               (println word ": " freq))
+             nil
+             freq-map))
 
 (defn -main
   [file-name]
-  (with-open [f (io/reader file-name)]))
+  (with-open [f (io/reader file-name)]
+    (let [urls (->> (line-seq f)
+                    (r/map str/trim)
+                    (into []))]
+      (-> urls
+          beat-node
+          write-output))))
