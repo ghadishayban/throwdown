@@ -48,27 +48,15 @@
                      (dec i))
               result))))))
 
+;; ...more hubris
 (def beat-erlang beat-node)
 (def beat-golang beat-node)
 
-(def sample-urls
-  (mapv (partial str "http://en.wikipedia.org/wiki/")
-        ["ISO_8601"
-         "Bonobos"
-         "Clojure"
-         "Rich_Hickey"
-         "JavaScript"
-         "Sumner_White"
-         "Palafrugell"
-         "De_minimis_fringe_benefit"
-         "Apple_Remote_Desktop"]))
-
 (defn write-output
   [freq-map]
-  (reduce-kv (fn [_ word freq]
-               (println word ": " freq))
-             nil
-             freq-map))
+  (with-open [f (io/writer "output.txt" :buffer-size 200000)]
+    (doseq [[word freq] freq-map]
+      (.write f (str word ": " freq "\n")))))
 
 (defn -main
   [file-name]
